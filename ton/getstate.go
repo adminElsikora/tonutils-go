@@ -81,7 +81,7 @@ func (c *APIClient) GetAccount(ctx context.Context, block *BlockIDExt, addr *add
 			shardHash = t.Shard.RootHash
 		}
 
-		shardAcc, balanceInfo, err := CheckAccountStateProof(addr, block, t.Proof, t.ShardProof, shardHash, c.proofCheckPolicy == ProofCheckPolicyUnsafe)
+		shardAcc, err := CheckAccountStateProof(addr, block, t.Proof, t.ShardProof, shardHash, c.proofCheckPolicy == ProofCheckPolicyUnsafe)
 		if errors.Is(err, ErrNoAddrInProof) && t.State == nil {
 			return &tlb.Account{
 				IsActive: false,
