@@ -16,8 +16,6 @@ import (
 func init() {
 	tl.Register(MasterchainInfo{}, "liteServer.masterchainInfo last:tonNode.blockIdExt state_root_hash:int256 init:tonNode.zeroStateIdExt = liteServer.MasterchainInfo")
 	tl.Register(GetMasterchainInf{}, "liteServer.getMasterchainInfo = liteServer.MasterchainInfo")
-	tl.Register(BlockIDExt{}, "tonNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tonNode.BlockIdExt")
-	tl.Register(ZeroStateIDExt{}, "tonNode.zeroStateIdExt workchain:int root_hash:int256 file_hash:int256 = tonNode.ZeroStateIdExt")
 }
 
 type GetMasterchainInf struct{}
@@ -40,7 +38,7 @@ func Test_Conn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err := client.AddConnectionsFromConfigUrl(ctx, "https://ton-blockchain.github.io/global.config.json")
+	err := client.AddConnectionsFromConfigUrl(ctx, "https://tonutils.com/global.config.json")
 	if err != nil {
 		t.Fatal("add connections err", err)
 	}
@@ -90,7 +88,7 @@ func Test_ConnSticky(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err := client.AddConnectionsFromConfigUrl(ctx, "https://ton-blockchain.github.io/global.config.json")
+	err := client.AddConnectionsFromConfigUrl(ctx, "https://tonutils.com/global.config.json")
 	if err != nil {
 		t.Fatal("add connections err", err)
 	}
@@ -129,7 +127,7 @@ func Test_ConnSticky(t *testing.T) {
 func Test_ServerProxy(t *testing.T) {
 	client := NewConnectionPool()
 
-	err := client.AddConnectionsFromConfigUrl(context.Background(), "https://ton-blockchain.github.io/global.config.json")
+	err := client.AddConnectionsFromConfigUrl(context.Background(), "https://tonutils.com/global.config.json")
 	if err != nil {
 		t.Fatal("add connections err", err)
 	}
@@ -150,10 +148,6 @@ func Test_ServerProxy(t *testing.T) {
 
 				return sc.Send(adnl.MessageAnswer{ID: m.ID, Data: resp})
 			}
-		case TCPAuthenticate:
-			return sc.Send(TCPAuthenticationNonce{make([]byte, 32)})
-		case TCPAuthenticationComplete:
-			return nil
 		case TCPPing:
 			return sc.Send(TCPPong{RandomID: m.RandomID})
 		}

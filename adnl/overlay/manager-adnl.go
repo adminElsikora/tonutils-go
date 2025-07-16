@@ -27,7 +27,6 @@ type ADNL interface {
 	SendCustomMessage(ctx context.Context, req tl.Serializable) error
 	Query(ctx context.Context, req, result tl.Serializable) error
 	Answer(ctx context.Context, queryID []byte, result tl.Serializable) error
-	GetCloserCtx() context.Context
 	RemoteAddr() string
 	GetID() []byte
 	Close()

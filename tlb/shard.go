@@ -197,8 +197,5 @@ func (s ShardIdent) IsParent(of ShardIdent) bool {
 }
 
 func (s ShardIdent) GetShardID() ShardID {
-	if s.PrefixBits > 63 {
-		return ShardID(0)
-	}
-	return ShardID(s.ShardPrefix | 1<<(63-s.PrefixBits))
+	return ShardID(s.ShardPrefix)
 }

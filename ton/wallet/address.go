@@ -12,7 +12,7 @@ import (
 
 const DefaultSubwallet = 698983191
 
-func AddressFromPubKey(key ed25519.PublicKey, version VersionConfig, subwallet uint32, workchain ...int8) (*address.Address, error) {
+func AddressFromPubKey(key ed25519.PublicKey, version VersionConfig, subwallet uint32) (*address.Address, error) {
 	state, err := GetStateInit(key, version, subwallet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state: %w", err)
@@ -23,12 +23,7 @@ func AddressFromPubKey(key ed25519.PublicKey, version VersionConfig, subwallet u
 		return nil, fmt.Errorf("failed to get state cell: %w", err)
 	}
 
-	wc := byte(0)
-	if len(workchain) > 0 {
-		wc = byte(workchain[0])
-	}
-
-	addr := address.NewAddress(0, wc, stateCell.Hash())
+	addr := address.NewAddress(0, 0, stateCell.Hash())
 
 	return addr, nil
 }
@@ -174,93 +169,4 @@ func GetPublicKey(ctx context.Context, api TonAPI, addr *address.Address) (ed255
 	copy(pubKey[32-len(b):], b)
 
 	return pubKey, nil
-}
-
-func ParsePubKeyFromData(version VersionConfig, data *cell.Cell) (ed25519.PublicKey, error) {
-	var ver Version
-	switch v := version.(type) {
-	case Version:
-		ver = v
-	case ConfigHighloadV3:
-		ver = HighloadV3
-	case ConfigV5R1Beta:
-		ver = V5R1Beta
-	case ConfigV5R1Final:
-		ver = V5R1Final
-	case ConfigCustom:
-		return v.ParsePubKeyFromData(data)
-	}
-
-	s := data.BeginParse()
-	switch ver {
-	case V1R1, V1R2, V1R3, V2R1, V2R2:
-		_, err := s.LoadSlice(32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey prefix: %w", err)
-		}
-
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	case V3R1, V3R2, V4R1, V4R2:
-		_, err := s.LoadSlice(32 + 32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey prefix: %w", err)
-		}
-
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	case V5R1Beta:
-		_, err := s.LoadSlice(33 + 32 + 8 + 8 + 32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey prefix: %w", err)
-		}
-
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	case V5R1Final:
-		_, err := s.LoadSlice(1 + 32 + 32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey prefix: %w", err)
-		}
-
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	case HighloadV2R2, HighloadV2Verified:
-		_, err := s.LoadSlice(32 + 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey prefix: %w", err)
-		}
-
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	case HighloadV3:
-		key, err := s.LoadSlice(256)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse pubkey: %w", err)
-		}
-
-		return key, nil
-	default:
-		return nil, ErrUnsupportedWalletVersion
-	}
 }

@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"hash/crc32"
 	"io"
 	"log"
@@ -44,9 +43,6 @@ type connection struct {
 	authed  bool
 	authEvt chan bool
 
-	authLock sync.Mutex
-	ourNonce []byte
-
 	weight       int64
 	lastRespTime int64
 
@@ -58,11 +54,10 @@ func (c *ConnectionPool) AddConnectionsFromConfig(ctx context.Context, config *G
 		return ErrNoConnections
 	}
 
-	const attempts = 2
 	fails := int32(0)
-	result := make(chan error, len(config.Liteservers)*attempts)
+	result := make(chan error, len(config.Liteservers))
 
-	timeout := attempts * 8 * time.Second
+	timeout := 3 * time.Second
 	if dl, ok := ctx.Deadline(); ok {
 		timeout = dl.Sub(time.Now())
 	}
@@ -73,20 +68,19 @@ func (c *ConnectionPool) AddConnectionsFromConfig(ctx context.Context, config *G
 		ls := ls
 
 		go func() {
-			for i := 0; i < attempts; i++ {
-				// we need personal context for each call, because it gets cancelled on failure of one
-				ctx, cancel := context.WithTimeout(context.Background(), timeout/attempts)
-				err := c.AddConnection(ctx, conStr, ls.ID.Key)
-				cancel()
-				if err == nil {
-					result <- nil
-					return
-				}
+			// we need personal context for each call, because it gets cancelled on failure of one
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
 
-				// if everything failed
-				if int(atomic.AddInt32(&fails, 1)) == len(config.Liteservers)*attempts {
-					result <- err
-				}
+			err := c.AddConnection(ctx, conStr, ls.ID.Key)
+			if err == nil {
+				result <- nil
+				return
+			}
+
+			// if everything failed
+			if int(atomic.AddInt32(&fails, 1)) == len(config.Liteservers) {
+				result <- err
 			}
 		}()
 	}
@@ -168,11 +162,11 @@ func (c *ConnectionPool) AddConnection(ctx context.Context, addr, serverKey stri
 	}
 
 	// build ciphers for incoming packets and for outgoing
-	conn.rCrypt, err = keys.NewCipherCtr(rnd[:32], rnd[64:80])
+	conn.rCrypt, err = adnl.NewCipherCtr(rnd[:32], rnd[64:80])
 	if err != nil {
 		return err
 	}
-	conn.wCrypt, err = keys.NewCipherCtr(rnd[32:64], rnd[80:96])
+	conn.wCrypt, err = adnl.NewCipherCtr(rnd[32:64], rnd[80:96])
 	if err != nil {
 		return err
 	}
@@ -213,6 +207,8 @@ func (c *ConnectionPool) AddConnection(ctx context.Context, addr, serverKey stri
 		if err != nil {
 			return err
 		}
+
+		go conn.startPings(5 * time.Second)
 
 		c.nodesMx.Lock()
 		c.activeNodes = append(c.activeNodes, conn)
@@ -335,41 +331,26 @@ func (n *connection) listen(connResult chan<- error) {
 	}
 }
 
-func (c *ConnectionPool) startPings(every time.Duration) {
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-
-	var nodes []*connection
+func (n *connection) startPings(every time.Duration) {
 	for {
 		select {
-		case <-c.globalCtx.Done():
+		case <-n.pool.globalCtx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(every):
 		}
-		nodes = nodes[:0]
-
-		c.nodesMx.RLock()
-		nodes = append(nodes, c.activeNodes...)
-		c.nodesMx.RUnlock()
 
 		num, err := rand.Int(rand.Reader, new(big.Int).SetInt64(0xFFFFFFFFFFFFFFF))
 		if err != nil {
 			continue
 		}
 
-		var wg sync.WaitGroup
-		for _, node := range nodes {
-			wg.Add(1)
-			go func(n *connection) {
-				defer wg.Done()
-				time.Sleep(1 * time.Second)
-				if err := n.ping(num.Int64()); err != nil {
-					// force close on error
-					_ = n.tcp.Close()
-				}
-			}(node)
+		err = n.ping(num.Int64())
+		if err != nil {
+			// force close in case of error
+			_ = n.tcp.Close()
+
+			break
 		}
-		wg.Wait()
 	}
 }
 
@@ -486,12 +467,12 @@ func (n *connection) handshake(data []byte, ourKey ed25519.PrivateKey, serverKey
 
 	pub := ourKey.Public().(ed25519.PublicKey)
 
-	kid, err := tl.Hash(keys.PublicKeyED25519{Key: serverKey})
+	kid, err := tl.Hash(adnl.PublicKeyED25519{Key: serverKey})
 	if err != nil {
 		return err
 	}
 
-	key, err := keys.SharedKey(ourKey, serverKey)
+	key, err := adnl.SharedKey(ourKey, serverKey)
 	if err != nil {
 		return err
 	}
@@ -508,7 +489,7 @@ func (n *connection) handshake(data []byte, ourKey ed25519.PrivateKey, serverKey
 		key[24], key[25], key[26], key[27], key[28], key[29], key[30], key[31],
 	}
 
-	ctr, err := keys.NewCipherCtr(k, iv)
+	ctr, err := adnl.NewCipherCtr(k, iv)
 	if err != nil {
 		return err
 	}

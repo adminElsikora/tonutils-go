@@ -21,12 +21,12 @@ var api = func() ton.APIClientWrapped {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := client.AddConnectionsFromConfigUrl(ctx, "https://ton-blockchain.github.io/testnet-global.config.json")
+	err := client.AddConnectionsFromConfigUrl(ctx, "https://tonutils.com/testnet-global.config.json")
 	if err != nil {
 		panic(err)
 	}
 
-	return ton.NewAPIClient(client).WithTimeout(5 * time.Second).WithRetry()
+	return ton.NewAPIClient(client).WithRetry()
 }()
 
 func TestJettonMasterClient_GetJettonData(t *testing.T) {
@@ -83,14 +83,14 @@ func TestJettonMasterClient_Mint(t *testing.T) {
 }
 
 func TestJettonMasterClient_Transfer(t *testing.T) {
-	cli := NewJettonMasterClient(api, address.MustParseAddr("kQDYYvd3BvVQkMLcQiV2iGOvpFz01LXSj1GK3Tmr_LJQ3i7D"))
+	cli := NewJettonMasterClient(api, address.MustParseAddr("EQAbMQzuuGiCne0R7QEj9nrXsjM7gNjeVmrlBZouyC-SCLlO"))
 
 	ctx := api.Client().StickyContext(context.Background())
 
 	w := getWallet(api)
-	log.Println("test wallet:", w.WalletAddress().String())
+	log.Println("test wallet:", w.Address().String())
 
-	tokenWallet, err := cli.GetJettonWallet(ctx, w.WalletAddress())
+	tokenWallet, err := cli.GetJettonWallet(ctx, w.Address())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestJettonMasterClient_Transfer(t *testing.T) {
 
 	amt := tlb.MustFromTON("1.15")
 	to := address.MustParseAddr("EQD4vUD2PYRLQd0mSwjmnnWSpeulTjZoFypJVUJAyJoUbrRu")
-	transferPayload, err := BuildTransferPayload(to, to, amt, tlb.MustFromTON("0"), nil, nil)
+	transferPayload, err := tokenWallet.BuildTransferPayload(to, amt, tlb.MustFromTON("0"), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -119,7 +119,7 @@ func TestJettonMasterClient_Transfer(t *testing.T) {
 	}
 
 	fmt.Println("Burning tokens...")
-	burnPayload, err := BuildBurnPayload(amt, to)
+	burnPayload, err := tokenWallet.BuildBurnPayload(amt, to)
 	if err != nil {
 		panic(err)
 	}

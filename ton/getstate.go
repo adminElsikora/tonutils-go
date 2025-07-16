@@ -15,7 +15,6 @@ func init() {
 	tl.Register(GetAccountStatePruned{}, "liteServer.getAccountStatePrunned id:tonNode.blockIdExt account:liteServer.accountId = liteServer.AccountState")
 	tl.Register(GetAccountState{}, "liteServer.getAccountState id:tonNode.blockIdExt account:liteServer.accountId = liteServer.AccountState")
 	tl.Register(AccountState{}, "liteServer.accountState id:tonNode.blockIdExt shardblk:tonNode.blockIdExt shard_proof:bytes proof:bytes state:bytes = liteServer.AccountState")
-	tl.Register(AccountID{}, "liteServer.accountId workchain:int id:int256 = liteServer.AccountId")
 }
 
 type AccountState struct {
@@ -102,10 +101,6 @@ func (c *APIClient) GetAccount(ctx context.Context, block *BlockIDExt, addr *add
 		var st tlb.AccountState
 		if err = st.LoadFromCell(t.State.BeginParse()); err != nil {
 			return nil, fmt.Errorf("failed to load account state: %w", err)
-		}
-
-		if st.Balance.Nano().Cmp(balanceInfo.Currencies.Coins.Nano()) != 0 {
-			return nil, fmt.Errorf("proof balance not match state balance")
 		}
 
 		acc.LastTxHash = shardAcc.LastTransHash

@@ -1,18 +1,17 @@
 package adnl
 
 import (
-	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/xssnick/tonutils-go/adnl/address"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"github.com/xssnick/tonutils-go/tl"
 )
 
 type PacketContent struct {
 	Rand1                       []byte
-	From                        *keys.PublicKeyED25519
+	From                        *PublicKeyED25519
 	FromIDShort                 []byte
 	Messages                    []any
 	Address                     *address.List
@@ -30,18 +29,20 @@ type PacketContent struct {
 var _PacketContentID uint32
 
 func init() {
-	_PacketContentID = tl.CRC("adnl.packetContents rand1:bytes flags:# " +
-		"from:flags.0?PublicKey from_short:flags.1?adnl.id.short " +
-		"message:flags.2?adnl.Message messages:flags.3?(vector adnl.Message) " +
-		"address:flags.4?adnl.addressList priority_address:flags.5?adnl.addressList " +
-		"seqno:flags.6?long confirm_seqno:flags.7?long recv_addr_list_version:flags.8?int " +
-		"recv_priority_addr_list_version:flags.9?int reinit_date:flags.10?int " +
+	_PacketContentID = tl.Register(PacketContent{}, "adnl.packetContents rand1:bytes flags:# "+
+		"from:flags.0?PublicKey from_short:flags.1?adnl.id.short "+
+		"message:flags.2?adnl.Message messages:flags.3?(vector adnl.Message) "+
+		"address:flags.4?adnl.addressList priority_address:flags.5?adnl.addressList "+
+		"seqno:flags.6?long confirm_seqno:flags.7?long recv_addr_list_version:flags.8?int "+
+		"recv_priority_addr_list_version:flags.9?int reinit_date:flags.10?int "+
 		"dst_reinit_date:flags.10?int signature:flags.11?bytes rand2:bytes = adnl.PacketContents")
 }
 
 var ErrTooShortData = errors.New("too short data")
 
 func parsePacket(data []byte) (_ *PacketContent, err error) {
+	var packet PacketContent
+
 	if len(data) < 4 {
 		return nil, ErrTooShortData
 	}
@@ -63,14 +64,12 @@ func parsePacket(data []byte) (_ *PacketContent, err error) {
 	flags := binary.LittleEndian.Uint32(data)
 	data = data[4:]
 
-	var packet PacketContent
-
 	if flags&_FlagFrom != 0 {
 		if len(data) < 4 {
 			return nil, ErrTooShortData
 		}
 
-		var key keys.PublicKeyED25519
+		var key PublicKeyED25519
 		data, err = tl.Parse(&key, data, true)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse 'from' key, err: %w", err)
@@ -178,13 +177,12 @@ func parsePacket(data []byte) (_ *PacketContent, err error) {
 	return &packet, nil
 }
 
-func (p *PacketContent) Serialize(buf *bytes.Buffer) (int, error) {
+func (p *PacketContent) Serialize() ([]byte, error) {
 	// adnl.packetContents id
-	tmp := make([]byte, 4)
-	binary.LittleEndian.PutUint32(tmp, _PacketContentID)
-	buf.Write(tmp)
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint32(data, _PacketContentID)
 
-	tl.ToBytesToBuffer(buf, p.Rand1)
+	data = append(data, tl.ToBytes(p.Rand1)...)
 
 	var flags uint32
 	if p.Seqno != nil {
@@ -226,100 +224,117 @@ func (p *PacketContent) Serialize(buf *bytes.Buffer) (int, error) {
 
 	flagsBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(flagsBytes, flags)
-	buf.Write(flagsBytes)
+	data = append(data, flagsBytes...)
 
 	if p.From != nil {
-		_, err := tl.Serialize(p.From, true, buf)
+		payload, err := tl.Serialize(p.From, true)
 		if err != nil {
-			return 0, fmt.Errorf("failed to serialize from key, err: %w", err)
+			return nil, fmt.Errorf("failed to serialize from key, err: %w", err)
 		}
+		data = append(data, payload...)
 	}
 
 	if p.FromIDShort != nil {
-		buf.Write(p.FromIDShort)
+		data = append(data, p.FromIDShort...)
 	}
 
-	var payloadLen = buf.Len()
 	if len(p.Messages) > 1 {
 		msgsNumBytes := make([]byte, 4)
 		binary.LittleEndian.PutUint32(msgsNumBytes, uint32(len(p.Messages)))
-		buf.Write(msgsNumBytes)
+		data = append(data, msgsNumBytes...)
 
+		fullLen := 0
 		for i, msg := range p.Messages {
-			_, err := tl.Serialize(msg, true, buf)
+			payload, err := tl.Serialize(msg, true)
 			if err != nil {
-				return 0, fmt.Errorf("failed to serialize %d message, err: %w", i, err)
+				return nil, fmt.Errorf("failed to serialize %d message, err: %w", i, err)
 			}
+
+			fullLen += len(payload)
+			data = append(data, payload...)
+		}
+
+		if fullLen > _MTU+128 {
+			return nil, fmt.Errorf("payload bigger than MTU, sz %d", fullLen)
 		}
 	} else if len(p.Messages) == 1 {
-		_, err := tl.Serialize(p.Messages[0], true, buf)
+		payload, err := tl.Serialize(p.Messages[0], true)
 		if err != nil {
-			return 0, fmt.Errorf("failed to serialize single message, err: %w", err)
+			return nil, fmt.Errorf("failed to serialize single message, err: %w", err)
 		}
+
+		if len(payload) > _MTU+128 {
+			return nil, fmt.Errorf("payload bigger than MTU, sz %d", len(payload))
+		}
+
+		data = append(data, payload...)
 	} else {
-		return 0, fmt.Errorf("no messages in packet")
+		return nil, fmt.Errorf("no messages in packet")
 	}
-	payloadLen = buf.Len() - payloadLen
 
 	if p.Address != nil {
-		_, err := tl.Serialize(p.Address, false, buf)
+		payload, err := tl.Serialize(p.Address, false)
 		if err != nil {
-			return 0, fmt.Errorf("failed to serialize address, err: %w", err)
+			return nil, fmt.Errorf("failed to serialize address, err: %w", err)
 		}
+
+		data = append(data, payload...)
 	}
 
 	if p.PriorityAddress != nil {
-		_, err := tl.Serialize(p.PriorityAddress, false, buf)
+		payload, err := tl.Serialize(p.PriorityAddress, false)
 		if err != nil {
-			return 0, fmt.Errorf("failed to serialize priority address, err: %w", err)
+			return nil, fmt.Errorf("failed to serialize priority address, err: %w", err)
 		}
+
+		data = append(data, payload...)
 	}
 
 	if p.Seqno != nil {
 		seqnoBytes := make([]byte, 8)
 		binary.LittleEndian.PutUint64(seqnoBytes, uint64(*p.Seqno))
-		buf.Write(seqnoBytes)
+		data = append(data, seqnoBytes...)
 	}
 
 	if p.ConfirmSeqno != nil {
 		confirmSeqnoBytes := make([]byte, 8)
 		binary.LittleEndian.PutUint64(confirmSeqnoBytes, uint64(*p.ConfirmSeqno))
-		buf.Write(confirmSeqnoBytes)
+		data = append(data, confirmSeqnoBytes...)
 	}
 
 	if p.RecvAddrListVersion != nil {
 		recvAddrListBytes := make([]byte, 4)
 		binary.LittleEndian.PutUint32(recvAddrListBytes, uint32(*p.RecvAddrListVersion))
-		buf.Write(recvAddrListBytes)
+		data = append(data, recvAddrListBytes...)
 	}
 
 	if p.RecvPriorityAddrListVersion != nil {
 		recvAddrListBytes := make([]byte, 4)
 		binary.LittleEndian.PutUint32(recvAddrListBytes, uint32(*p.RecvPriorityAddrListVersion))
-		buf.Write(recvAddrListBytes)
+		data = append(data, recvAddrListBytes...)
 	}
 
 	if p.ReinitDate != nil {
 		reinitDateBytes := make([]byte, 4)
 		binary.LittleEndian.PutUint32(reinitDateBytes, uint32(*p.ReinitDate))
-		buf.Write(reinitDateBytes)
+		data = append(data, reinitDateBytes...)
 
 		if p.DstReinitDate == nil {
-			return 0, fmt.Errorf("dst reinit could not be nil when reinit is specified")
+			return nil, fmt.Errorf("dst reinit could not be nil when reinit is specified")
 		}
 
 		dstReinitDateBytes := make([]byte, 4)
 		binary.LittleEndian.PutUint32(dstReinitDateBytes, uint32(*p.DstReinitDate))
-		buf.Write(dstReinitDateBytes)
+		data = append(data, dstReinitDateBytes...)
 	}
 
 	if p.Signature != nil {
-		tl.ToBytesToBuffer(buf, p.Signature)
+		data = append(data, tl.ToBytes(p.Signature)...)
 	}
 
-	tl.ToBytesToBuffer(buf, p.Rand2)
+	data = append(data, tl.ToBytes(p.Rand2)...)
 
-	return payloadLen, nil
+	return data, nil
 }
 
 var _FlagsDBG = map[uint32]string{
@@ -339,7 +354,13 @@ var _FlagsDBG = map[uint32]string{
 	0x1fff: "ALL",
 }
 
-func resizeRandForPacket(data []byte) ([]byte, error) {
+func randForPacket() ([]byte, error) {
+	data := make([]byte, 16)
+	_, err := rand.Read(data)
+	if err != nil {
+		return nil, err
+	}
+
 	if data[0]&1 > 0 {
 		return data[1:], nil
 	}

@@ -58,11 +58,7 @@ func (s *SpecV5R1Beta) BuildMessage(ctx context.Context, _ bool, _ *ton.BlockIDE
 		MustStoreUInt(uint64(seq), 32).
 		MustStoreBuilder(actions)
 
-	sign, err := s.wallet.signer(ctx, payload.EndCell(), s.wallet.subwallet)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
-	}
-
+	sign := payload.EndCell().Sign(s.wallet.key)
 	msg := cell.BeginCell().MustStoreBuilder(payload).MustStoreSlice(sign, 512).EndCell()
 
 	return msg, nil

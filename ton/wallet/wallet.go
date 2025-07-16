@@ -13,8 +13,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"time"
+
+	"github.com/xssnick/tonutils-go/adnl"
 
 	"github.com/xssnick/tonutils-go/ton"
 
@@ -30,26 +31,23 @@ const MainnetGlobalID = -239
 const TestnetGlobalID = -3
 
 const (
-	V1R1       Version = 11
-	V1R2       Version = 12
-	V1R3       Version = 13
-	V2R1       Version = 21
-	V2R2       Version = 22
-	V3R1       Version = 31
-	V3R2       Version = 32
-	V3                 = V3R2
-	V4R1       Version = 41
-	V4R2       Version = 42
-	V5R1Beta   Version = 51 // W5 Beta
-	V5R1Final  Version = 52 // W5 Final
-	HighloadV3 Version = 300
-	Lockup     Version = 200
-	Unknown    Version = 0
-
-	// Deprecated: HighloadV2R2 contract has potential overflow issues, it is better to switch to HighloadV3
-	HighloadV2R2 Version = 122
-	// Deprecated: HighloadV2Verified contract has potential overflow issues, it is better to switch to HighloadV3
+	V1R1               Version = 11
+	V1R2               Version = 12
+	V1R3               Version = 13
+	V2R1               Version = 21
+	V2R2               Version = 22
+	V3R1               Version = 31
+	V3R2               Version = 32
+	V3                         = V3R2
+	V4R1               Version = 41
+	V4R2               Version = 42
+	V5R1Beta           Version = 51 // W5 Beta
+	V5R1Final          Version = 52 // W5 Final
+	HighloadV2R2       Version = 122
 	HighloadV2Verified Version = 123
+	HighloadV3         Version = 300
+	Lockup             Version = 200
+	Unknown            Version = 0
 )
 
 const (
@@ -95,9 +93,8 @@ var (
 		HighloadV3: _HighloadV3CodeHex,
 		Lockup:     _LockupCodeHex,
 	}
-	walletCodeBOC           = map[Version][]byte{}
-	walletCode              = map[Version]*cell.Cell{}
-	walletVersionByCodeHash = map[string]Version{}
+	walletCodeBOC = map[Version][]byte{}
+	walletCode    = map[Version]*cell.Cell{}
 )
 
 func init() {
@@ -108,13 +105,10 @@ func init() {
 		if err != nil {
 			panic(err)
 		}
-		code, err := cell.FromBOC(walletCodeBOC[ver])
+		walletCode[ver], err = cell.FromBOC(walletCodeBOC[ver])
 		if err != nil {
 			panic(err)
 		}
-
-		walletCode[ver] = code
-		walletVersionByCodeHash[string(code.Hash())] = ver
 	}
 }
 
@@ -133,10 +127,15 @@ var (
 
 type TonAPI interface {
 	WaitForBlock(seqno uint32) ton.APIClientWrapped
+	Client() ton.LiteClient
 	CurrentMasterchainInfo(ctx context.Context) (*ton.BlockIDExt, error)
+	GetAccount(ctx context.Context, block *ton.BlockIDExt, addr *address.Address) (*tlb.Account, error)
 	SendExternalMessage(ctx context.Context, msg *tlb.ExternalMessage) error
 	SendExternalMessageWaitTransaction(ctx context.Context, ext *tlb.ExternalMessage) (*tlb.Transaction, *ton.BlockIDExt, []byte, error)
+	RunGetMethod(ctx context.Context, blockInfo *ton.BlockIDExt, addr *address.Address, method string, params ...interface{}) (*ton.ExecutionResult, error)
+	ListTransactions(ctx context.Context, addr *address.Address, num uint32, lt uint64, txHash []byte) ([]*tlb.Transaction, error)
 	FindLastTransactionByInMsgHash(ctx context.Context, addr *address.Address, msgHash []byte, maxTxNumToScan ...int) (*tlb.Transaction, error)
+	FindLastTransactionByOutMsgHash(ctx context.Context, addr *address.Address, msgHash []byte, maxTxNumToScan ...int) (*tlb.Transaction, error)
 }
 
 type Message struct {
@@ -144,14 +143,11 @@ type Message struct {
 	InternalMessage *tlb.InternalMessage
 }
 
-type Signer func(ctx context.Context, toSign *cell.Cell, subwallet uint32) ([]byte, error)
-
 type Wallet struct {
-	api    TonAPI
-	key    ed25519.PrivateKey
-	pubKey ed25519.PublicKey
-	addr   *address.Address
-	ver    VersionConfig
+	api  TonAPI
+	key  ed25519.PrivateKey
+	addr *address.Address
+	ver  VersionConfig
 
 	// Can be used to operate multiple wallets with the same key and version.
 	// use GetSubwallet if you need it.
@@ -159,38 +155,9 @@ type Wallet struct {
 
 	// Stores a pointer to implementation of the version related functionality
 	spec any
-
-	signer Signer
 }
-
-type Option func(*Wallet)
 
 func FromPrivateKey(api TonAPI, key ed25519.PrivateKey, version VersionConfig) (*Wallet, error) {
-	return newWallet(
-		api,
-		key.Public().(ed25519.PublicKey),
-		version,
-		WithPrivateKey(key))
-}
-
-// FromPrivateKeyWithOptions - can initialize customizable wallet, for example: FromPrivateKeyWithOptions(api, key, version, WithWorkchain(-1))
-func FromPrivateKeyWithOptions(api TonAPI, key ed25519.PrivateKey, version VersionConfig, options ...Option) (*Wallet, error) {
-	return newWallet(
-		api,
-		key.Public().(ed25519.PublicKey),
-		version,
-		append([]Option{WithPrivateKey(key)}, options...)...)
-}
-
-func FromSigner(api TonAPI, publicKey ed25519.PublicKey, version VersionConfig, signer Signer) (*Wallet, error) {
-	return newWallet(
-		api,
-		publicKey,
-		version,
-		WithSigner(signer))
-}
-
-func newWallet(api TonAPI, publicKey ed25519.PublicKey, version VersionConfig, options ...Option) (*Wallet, error) {
 	var subwallet uint32 = DefaultSubwallet
 
 	// default subwallet depends on wallet type
@@ -200,21 +167,17 @@ func newWallet(api TonAPI, publicKey ed25519.PublicKey, version VersionConfig, o
 		subwallet = 0
 	}
 
-	addr, err := AddressFromPubKey(publicKey, version, subwallet)
+	addr, err := AddressFromPubKey(key.Public().(ed25519.PublicKey), version, subwallet)
 	if err != nil {
 		return nil, err
 	}
 
 	w := &Wallet{
 		api:       api,
+		key:       key,
 		addr:      addr,
 		ver:       version,
 		subwallet: subwallet,
-		pubKey:    publicKey,
-	}
-
-	for _, opt := range options {
-		opt(w)
 	}
 
 	w.spec, err = getSpec(w)
@@ -223,30 +186,6 @@ func newWallet(api TonAPI, publicKey ed25519.PublicKey, version VersionConfig, o
 	}
 
 	return w, nil
-}
-
-func WithPrivateKey(privateKey ed25519.PrivateKey) Option {
-	return func(w *Wallet) {
-		w.key = privateKey
-		w.signer = func(ctx context.Context, toSign *cell.Cell, subwallet uint32) ([]byte, error) {
-			if toSign == nil {
-				return nil, fmt.Errorf("cannot sign: cell is nil")
-			}
-			return toSign.Sign(privateKey), nil
-		}
-	}
-}
-
-func WithSigner(signer Signer) Option {
-	return func(w *Wallet) {
-		w.signer = signer
-	}
-}
-
-func WithWorkchain(wc int8) Option {
-	return func(w *Wallet) {
-		w.addr = address.NewAddress(w.addr.FlagsToByte(), byte(wc), w.addr.Data())
-	}
 }
 
 func getSpec(w *Wallet) (any, error) {
@@ -331,7 +270,7 @@ func (w *Wallet) PrivateKey() ed25519.PrivateKey {
 }
 
 func (w *Wallet) GetSubwallet(subwallet uint32) (*Wallet, error) {
-	addr, err := AddressFromPubKey(w.pubKey, w.ver, subwallet, int8(w.addr.Workchain()))
+	addr, err := AddressFromPubKey(w.key.Public().(ed25519.PublicKey), w.ver, subwallet)
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +278,9 @@ func (w *Wallet) GetSubwallet(subwallet uint32) (*Wallet, error) {
 	sub := &Wallet{
 		api:       w.api,
 		key:       w.key,
-		pubKey:    w.pubKey,
 		addr:      addr,
 		ver:       w.ver,
 		subwallet: subwallet,
-		signer:    w.signer,
 	}
 
 	sub.spec, err = getSpec(sub)
@@ -404,7 +341,7 @@ func (w *Wallet) BuildExternalMessageForMany(ctx context.Context, messages []*Me
 func (w *Wallet) PrepareExternalMessageForMany(ctx context.Context, withStateInit bool, messages []*Message) (_ *tlb.ExternalMessage, err error) {
 	var stateInit *tlb.StateInit
 	if withStateInit {
-		stateInit, err = GetStateInit(w.pubKey, w.ver, w.subwallet)
+		stateInit, err = GetStateInit(w.key.Public().(ed25519.PublicKey), w.ver, w.subwallet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get state init: %w", err)
 		}
@@ -481,10 +418,6 @@ func (w *Wallet) BuildTransfer(to *address.Address, amount tlb.Coins, bounce boo
 func (w *Wallet) BuildTransferEncrypted(ctx context.Context, to *address.Address, amount tlb.Coins, bounce bool, comment string) (_ *Message, err error) {
 	var body *cell.Cell
 	if comment != "" {
-		if w.key == nil {
-			return nil, fmt.Errorf("private key is not set for this wallet")
-		}
-
 		key, err := GetPublicKey(ctx, w.api, to)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get destination contract (wallet) public key")
@@ -613,19 +546,10 @@ func DecryptCommentCell(commentCell *cell.Cell, sender *address.Address, ourKey 
 		return nil, fmt.Errorf("opcode not match encrypted comment")
 	}
 
-	data, err := slc.LoadBinarySnake()
+	xorKey, err := slc.LoadSlice(256)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load snake encrypted data: %w", err)
+		return nil, fmt.Errorf("failed to load xor key: %w", err)
 	}
-
-	if len(data) < 32+32+16 || len(data)%16 != 0 {
-		return nil, fmt.Errorf("invalid data")
-	}
-
-	xorKey := data[:32]
-	msgKey := data[32:48]
-	data = data[48:]
-
 	for i := 0; i < 32; i++ {
 		xorKey[i] ^= theirKey[i]
 	}
@@ -634,7 +558,12 @@ func DecryptCommentCell(commentCell *cell.Cell, sender *address.Address, ourKey 
 		return nil, fmt.Errorf("message was encrypted not for the given keys")
 	}
 
-	sharedKey, err := keys.SharedKey(ourKey, theirKey)
+	msgKey, err := slc.LoadSlice(128)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load xor key: %w", err)
+	}
+
+	sharedKey, err := adnl.SharedKey(ourKey, theirKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute shared key: %w", err)
 	}
@@ -642,6 +571,15 @@ func DecryptCommentCell(commentCell *cell.Cell, sender *address.Address, ourKey 
 	h := hmac.New(sha512.New, sharedKey)
 	h.Write(msgKey)
 	x := h.Sum(nil)
+
+	data, err := slc.LoadBinarySnake()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load snake encrypted data: %w", err)
+	}
+
+	if len(data) < 32 || len(data)%16 != 0 {
+		return nil, fmt.Errorf("invalid data")
+	}
 
 	c, err := aes.NewCipher(x[:32])
 	if err != nil {
@@ -654,10 +592,7 @@ func DecryptCommentCell(commentCell *cell.Cell, sender *address.Address, ourKey 
 		return nil, fmt.Errorf("invalid prefix size %d", data[0])
 	}
 
-	// repacking address with expected flags
-	snd := address.NewAddress(0, byte(sender.Workchain()), sender.Data())
-
-	h = hmac.New(sha512.New, []byte(snd.String()))
+	h = hmac.New(sha512.New, []byte(sender.String()))
 	h.Write(data)
 	if !bytes.Equal(msgKey, h.Sum(nil)[:16]) {
 		return nil, fmt.Errorf("incorrect msg key")
@@ -670,7 +605,7 @@ func CreateEncryptedCommentCell(text string, senderAddr *address.Address, ourKey
 	// encrypted comment op code
 	root := cell.BeginCell().MustStoreUInt(EncryptedCommentOpcode, 32)
 
-	sharedKey, err := keys.SharedKey(ourKey, theirKey)
+	sharedKey, err := adnl.SharedKey(ourKey, theirKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute shared key: %w", err)
 	}
@@ -689,10 +624,7 @@ func CreateEncryptedCommentCell(text string, senderAddr *address.Address, ourKey
 	}
 	data = append(pfx, data...)
 
-	// repacking address with expected flags
-	snd := address.NewAddress(0, byte(senderAddr.Workchain()), senderAddr.Data())
-
-	h := hmac.New(sha512.New, []byte(snd.String()))
+	h := hmac.New(sha512.New, []byte(senderAddr.String()))
 	h.Write(data)
 	msgKey := h.Sum(nil)[:16]
 
@@ -713,7 +645,8 @@ func CreateEncryptedCommentCell(text string, senderAddr *address.Address, ourKey
 		xorKey[i] ^= theirKey[i]
 	}
 
-	data = append(append(xorKey, msgKey...), data...)
+	root.MustStoreSlice(xorKey, 256)
+	root.MustStoreSlice(msgKey, 128)
 
 	if err := root.StoreBinarySnake(data); err != nil {
 		return nil, fmt.Errorf("failed to build comment: %w", err)
@@ -730,7 +663,7 @@ func (w *Wallet) transfer(ctx context.Context, to *address.Address, amount tlb.C
 	return w.Send(ctx, transfer, waitConfirmation...)
 }
 
-func (w *Wallet) DeployContractWaitTransaction(ctx context.Context, amount tlb.Coins, msgBody, contractCode, contractData *cell.Cell, workchain ...int8) (*address.Address, *tlb.Transaction, *ton.BlockIDExt, error) {
+func (w *Wallet) DeployContractWaitTransaction(ctx context.Context, amount tlb.Coins, msgBody, contractCode, contractData *cell.Cell) (*address.Address, *tlb.Transaction, *ton.BlockIDExt, error) {
 	state := &tlb.StateInit{
 		Data: contractData,
 		Code: contractCode,
@@ -741,12 +674,7 @@ func (w *Wallet) DeployContractWaitTransaction(ctx context.Context, amount tlb.C
 		return nil, nil, nil, err
 	}
 
-	wc := int8(0)
-	if len(workchain) > 0 {
-		wc = workchain[0]
-	}
-
-	addr := address.NewAddress(0, byte(wc), stateCell.Hash())
+	addr := address.NewAddress(0, 0, stateCell.Hash())
 
 	tx, block, err := w.SendWaitTransaction(ctx, &Message{
 		Mode: PayGasSeparately + IgnoreErrors,

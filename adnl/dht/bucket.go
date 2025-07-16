@@ -1,7 +1,6 @@
 package dht
 
 import (
-	"bytes"
 	"sort"
 	"sync"
 )
@@ -40,26 +39,13 @@ func (b *Bucket) getNode(id string) *dhtNode {
 	return nil
 }
 
-func (b *Bucket) findNode(id []byte) *dhtNode {
-	b.mx.RLock()
-	defer b.mx.RUnlock()
-
-	for _, n := range b.nodes {
-		if n != nil && bytes.Equal(n.adnlId, id) {
-			return n
-		}
-	}
-
-	return nil
-}
-
 func (b *Bucket) addNode(node *dhtNode) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 	defer b.sortAndFilter()
 
 	for i, n := range b.nodes {
-		if n != nil && bytes.Equal(n.adnlId, node.adnlId) {
+		if n != nil && n.id() == node.id() {
 			b.nodes[i] = node
 			return
 		}

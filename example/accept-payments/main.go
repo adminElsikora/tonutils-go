@@ -13,7 +13,7 @@ import (
 func main() {
 	client := liteclient.NewConnectionPool()
 
-	cfg, err := liteclient.GetConfigFromUrl(context.Background(), "https://ton-blockchain.github.io/global.config.json")
+	cfg, err := liteclient.GetConfigFromUrl(context.Background(), "https://ton.org/global.config.json")
 	if err != nil {
 		log.Fatalln("get config err: ", err.Error())
 		return
@@ -73,29 +73,6 @@ func main() {
 			ti := tx.IO.In.AsInternal()
 			src := ti.SrcAddr
 
-			if dsc, ok := tx.Description.(tlb.TransactionDescriptionOrdinary); ok && dsc.BouncePhase != nil {
-				if _, ok = dsc.BouncePhase.Phase.(tlb.BouncePhaseOk); ok {
-					// transaction was bounced, and coins were returned to sender
-					// this can happen mostly on custom contracts
-					continue
-				}
-			}
-
-			if !ti.ExtraCurrencies.IsEmpty() {
-				kv, err := ti.ExtraCurrencies.LoadAll()
-				if err != nil {
-					log.Fatalln("load extra currencies err: ", err.Error())
-					return
-				}
-
-				for _, dictKV := range kv {
-					currencyId := dictKV.Key.MustLoadUInt(32)
-					amount := dictKV.Value.MustLoadVarUInt(32)
-
-					log.Println("received", amount.String(), "ExtraCurrency with id", currencyId, "from", src.String())
-				}
-			}
-
 			// verify that event sender is our jetton wallet
 			if ti.SrcAddr.Equals(treasuryJettonWallet.Address()) {
 				var transfer jetton.TransferNotification
@@ -109,10 +86,8 @@ func main() {
 				}
 			}
 
-			if ti.Amount.Nano().Sign() > 0 {
-				// show received ton amount
-				log.Println("received", ti.Amount.String(), "TON from", src.String())
-			}
+			// show received ton amount
+			log.Println("received", ti.Amount.String(), "TON from", src.String())
 		}
 
 		// update last processed lt and save it in db

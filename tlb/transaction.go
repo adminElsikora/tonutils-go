@@ -203,6 +203,10 @@ type TransactionDescriptionMergeInstall struct {
 	Destroyed          bool           `tlb:"bool"`
 }
 
+type TransactionDescription struct {
+	Description any `tlb:"[TransactionDescriptionOrdinary,TransactionDescriptionStorage,TransactionDescriptionTickTock,TransactionDescriptionSplitPrepare,TransactionDescriptionSplitInstall,TransactionDescriptionMergePrepare,TransactionDescriptionMergeInstall]"`
+}
+
 type HashUpdate struct {
 	_       Magic  `tlb:"#72"`
 	OldHash []byte `tlb:"bits 256"`
@@ -223,9 +227,9 @@ type Transaction struct {
 		In  *Message      `tlb:"maybe ^"`
 		Out *MessagesList `tlb:"maybe ^"`
 	} `tlb:"^"`
-	TotalFees   CurrencyCollection `tlb:"."`
-	StateUpdate HashUpdate         `tlb:"^"` // of Account
-	Description any                `tlb:"^ [TransactionDescriptionOrdinary,TransactionDescriptionStorage,TransactionDescriptionTickTock,TransactionDescriptionSplitPrepare,TransactionDescriptionSplitInstall,TransactionDescriptionMergePrepare,TransactionDescriptionMergeInstall]"`
+	TotalFees   CurrencyCollection     `tlb:"."`
+	StateUpdate HashUpdate             `tlb:"^"` // of Account
+	Description TransactionDescription `tlb:"^"`
 
 	// not in scheme, but will be filled based on request data for flexibility
 	Hash []byte `tlb:"-"`
@@ -281,9 +285,9 @@ func (t *Transaction) String() string {
 
 	var build string
 
-	switch t.Description.(type) {
+	switch t.Description.Description.(type) {
 	default:
-		return "[" + strings.ReplaceAll(reflect.TypeOf(t.Description).Name(), "TransactionDescription", "") + "]"
+		return "[" + strings.ReplaceAll(reflect.TypeOf(t.Description.Description).Name(), "TransactionDescription", "") + "]"
 	case TransactionDescriptionOrdinary:
 	}
 	if t.IO.In != nil {

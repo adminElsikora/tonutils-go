@@ -626,11 +626,3 @@ func (c *Slice) ToCell() (*Cell, error) {
 	cl.calculateHashes()
 	return cl, nil
 }
-
-func (c *Slice) String() string {
-	cl, err := c.ToCell()
-	if err != nil {
-		return "<invalid>"
-	}
-	return cl.String()
-}

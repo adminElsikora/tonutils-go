@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"strings"
 )
 
 type Dictionary struct {
@@ -327,26 +326,16 @@ func (d *Dictionary) All() []*HashmapKV {
 	return old
 }
 
-func (d *Dictionary) LoadAll(skipPruned ...bool) ([]DictKV, error) {
-	if d == nil || d.root == nil {
+func (d *Dictionary) LoadAll() ([]DictKV, error) {
+	if d.root == nil {
 		return []DictKV{}, nil
 	}
-	return d.mapInner(d.keySz, d.keySz, d.root, BeginCell(), len(skipPruned) > 0 && skipPruned[0])
+	return d.mapInner(d.keySz, d.keySz, d.root.BeginParse(), BeginCell())
 }
 
-func (d *Dictionary) mapInner(keySz, leftKeySz uint, c *Cell, keyPrefix *Builder, skipPruned bool) ([]DictKV, error) {
+func (d *Dictionary) mapInner(keySz, leftKeySz uint, loader *Slice, keyPrefix *Builder) ([]DictKV, error) {
 	var err error
 	var sz uint
-
-	if c.special {
-		if skipPruned && c.GetType() == PrunedCellType {
-			// ignore pruned keys
-			return []DictKV{}, nil
-		}
-		return nil, fmt.Errorf("dict has special cells in tree structure, cannot load some values")
-	}
-
-	loader := c.BeginParse()
 
 	sz, keyPrefix, err = loadLabel(leftKeySz, loader, keyPrefix)
 	if err != nil {
@@ -356,22 +345,22 @@ func (d *Dictionary) mapInner(keySz, leftKeySz uint, c *Cell, keyPrefix *Builder
 	// until key size is not equals we go deeper
 	if keyPrefix.BitsUsed() < keySz {
 		// 0 bit branch
-		left, err := loader.LoadRefCell()
+		left, err := loader.LoadRef()
 		if err != nil {
 			return nil, err
 		}
 
-		keysL, err := d.mapInner(keySz, leftKeySz-(1+sz), left, keyPrefix.Copy().MustStoreUInt(0, 1), skipPruned)
+		keysL, err := d.mapInner(keySz, leftKeySz-(1+sz), left, keyPrefix.Copy().MustStoreUInt(0, 1))
 		if err != nil {
 			return nil, err
 		}
 
 		// 1 bit branch
-		right, err := loader.LoadRefCell()
+		right, err := loader.LoadRef()
 		if err != nil {
 			return nil, err
 		}
-		keysR, err := d.mapInner(keySz, leftKeySz-(1+sz), right, keyPrefix.Copy().MustStoreUInt(1, 1), skipPruned)
+		keysR, err := d.mapInner(keySz, leftKeySz-(1+sz), right, keyPrefix.Copy().MustStoreUInt(1, 1))
 		if err != nil {
 			return nil, err
 		}
@@ -391,7 +380,6 @@ func (d *Dictionary) findKey(branch *Cell, lookupKey *Cell, at *ProofSkeleton) (
 		return nil, nil, ErrNoSuchKeyInDict
 	}
 
-	var depth int
 	var sk, root *ProofSkeleton
 	if at != nil {
 		root = CreateProofSkeleton()
@@ -426,10 +414,6 @@ func (d *Dictionary) findKey(branch *Cell, lookupKey *Cell, at *ProofSkeleton) (
 
 		if lKey.BitsLeft() == 0 {
 			if sk != nil {
-				if depth == 0 {
-					// key is at the dict root
-					return branchSlice, at, nil
-				}
 				at.Merge(root)
 			}
 			return branchSlice, sk, nil
@@ -440,7 +424,6 @@ func (d *Dictionary) findKey(branch *Cell, lookupKey *Cell, at *ProofSkeleton) (
 			return nil, nil, err
 		}
 
-		depth++
 		branch, err = branch.PeekRef(int(idx))
 		if err != nil {
 			return nil, nil, err
@@ -637,22 +620,4 @@ func (d *Dictionary) AsCell() *Cell {
 // Deprecated: use AsCell
 func (d *Dictionary) ToCell() (*Cell, error) {
 	return d.root, nil
-}
-
-func (d *Dictionary) String() string {
-	kv, err := d.LoadAll(true)
-	if err != nil {
-		return "{Corrupted Dict}"
-	}
-
-	var list []string
-	for _, dictKV := range kv {
-		list = append(list, fmt.Sprintf("Key %s: Value %d bits, %d refs", dictKV.Key.String(), dictKV.Value.BitsLeft(), dictKV.Value.RefsNum()))
-	}
-
-	if len(list) == 0 {
-		return "{}"
-	}
-
-	return "{\n\t" + strings.Join(list, "\n\t") + "\n}"
 }

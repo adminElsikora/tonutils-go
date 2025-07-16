@@ -6,13 +6,13 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"math/bits"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/xssnick/tonutils-go/adnl"
 	"github.com/xssnick/tonutils-go/adnl/overlay"
 	"github.com/xssnick/tonutils-go/tl"
 )
@@ -30,6 +30,7 @@ type dhtNode struct {
 	currentState int
 	badScore     int32
 
+	lastQueryAt  int64
 	inFlyQueries int32
 
 	mx sync.Mutex
@@ -49,16 +50,13 @@ func (l dhtNodeList) Less(i, j int) bool {
 	if l[i] == nil || l[j] == nil {
 		return false
 	}
-	iScore := atomic.LoadInt32(&l[i].badScore)
-	jScore := atomic.LoadInt32(&l[j].badScore)
-
-	if iScore != jScore {
-		return iScore < jScore
+	if l[i].badScore != l[j].badScore {
+		return l[i].badScore < l[j].badScore
 	}
-	return atomic.LoadInt64(&l[i].ping) < atomic.LoadInt64(&l[j].ping)
+	return l[i].ping < l[j].ping
 }
 
-func (c *Client) initNode(id []byte, addr string, serverKey ed25519.PublicKey) *dhtNode {
+func (c *Client) connectToNode(id []byte, addr string, serverKey ed25519.PublicKey) *dhtNode {
 	n := &dhtNode{
 		adnlId:    id,
 		addr:      addr,
@@ -199,7 +197,7 @@ func checkValue(id []byte, value *Value) error {
 	case UpdateRuleAnybody:
 		// no checks
 	case UpdateRuleSignature:
-		pub, ok := value.KeyDescription.ID.(keys.PublicKeyED25519)
+		pub, ok := value.KeyDescription.ID.(adnl.PublicKeyED25519)
 		if !ok {
 			return fmt.Errorf("unsupported value's key type: %s", reflect.ValueOf(value.KeyDescription.ID).String())
 		}
@@ -265,12 +263,13 @@ func (n *dhtNode) query(ctx context.Context, req, res tl.Serializable) error {
 
 	defer func() {
 		if atomic.AddInt32(&n.inFlyQueries, -1) == 0 && n.badScore > 1 {
-			peer.Reinit()
+			peer.Close()
 		}
 	}()
 
 	t := time.Now()
 	reportLimit := t.Add(queryTimeout - 500*time.Millisecond)
+	atomic.StoreInt64(&n.lastQueryAt, t.Unix())
 	err = peer.Query(ctx, req, res)
 	if err != nil {
 		if time.Now().After(reportLimit) {
@@ -290,7 +289,7 @@ func (n *dhtNode) query(ctx context.Context, req, res tl.Serializable) error {
 func (n *dhtNode) updateStatus(isGood bool) {
 	if isGood {
 		atomic.StoreInt32(&n.badScore, 0)
-		Logger("Make DHT peer", n.id(), "feel good")
+		Logger("Make DHT peer {} feel good {}", n.id(), 0)
 		return
 	}
 
@@ -298,7 +297,7 @@ func (n *dhtNode) updateStatus(isGood bool) {
 	if badScore <= _MaxFailCount {
 		badScore = atomic.AddInt32(&n.badScore, 1)
 	}
-	Logger("Make DHT peer", n.id(), "feel bad", badScore)
+	Logger("Make DHT peer {} feel bad {}", n.id(), badScore)
 }
 
 func (n *dhtNode) id() string {

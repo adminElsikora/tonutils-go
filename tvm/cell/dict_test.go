@@ -6,11 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"log"
 	"math"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/xssnick/tonutils-go/address"
 )
@@ -323,109 +321,5 @@ func Test_ReplaceDict(t *testing.T) {
 	}
 	if err := dict.SetIntKey(k2, v); err != nil {
 		panic(err)
-	}
-}
-
-func TestDict_150KProof(t *testing.T) {
-	const sz = 150000
-	tm := time.Now()
-	dict := NewDict(256)
-	keys := make([]*Cell, sz)
-	for i := 0; i < sz; i++ {
-		b := make([]byte, 32)
-		rand.Read(b)
-
-		key := BeginCell().MustStoreSlice(b, 256).EndCell()
-		keys[i] = key
-
-		if err := dict.Set(key, BeginCell().MustStoreUInt(uint64(i), 32).EndCell()); err != nil {
-			t.Fatal(err.Error())
-		}
-	}
-	log.Println("DICT CREATED:", time.Since(tm).String())
-
-	tm = time.Now()
-	proofs := make([]*Cell, sz/10)
-	for i := 0; i < sz/10; i++ {
-		sk := CreateProofSkeleton()
-		for y := 0; y < 10; y++ {
-			_, valSk, err := dict.LoadValueWithProof(keys[i*10+y], sk)
-			if err != nil {
-				t.Fatal(err.Error())
-			}
-			valSk.SetRecursive() // to leave full value in proof
-		}
-
-		prf, err := dict.AsCell().CreateProof(sk)
-		if err != nil {
-			t.Fatal(err.Error())
-		}
-
-		proofs[i] = prf
-	}
-
-	log.Println("PROOF GROUPS BUILT:", time.Since(tm).String(), len(proofs))
-	println(proofs[5].Dump())
-}
-
-func TestDictionary_String(t *testing.T) {
-	const look = `{
-	Key 32[00000000]: Value 32 bits, 0 refs
-	Key 32[00000001]: Value 32 bits, 0 refs
-	Key 32[00000002]: Value 32 bits, 0 refs
-	Key 32[00000003]: Value 32 bits, 0 refs
-	Key 32[00000004]: Value 32 bits, 0 refs
-	Key 32[00000005]: Value 32 bits, 0 refs
-	Key 32[00000006]: Value 32 bits, 0 refs
-	Key 32[00000007]: Value 32 bits, 0 refs
-	Key 32[00000008]: Value 32 bits, 0 refs
-	Key 32[00000009]: Value 32 bits, 0 refs
-	Key 32[0000000A]: Value 32 bits, 0 refs
-	Key 32[0000000B]: Value 32 bits, 0 refs
-	Key 32[0000000C]: Value 32 bits, 0 refs
-	Key 32[0000000D]: Value 32 bits, 0 refs
-	Key 32[0000000E]: Value 32 bits, 0 refs
-}`
-
-	const lookProof = `{
-	Key 32[00000006]: Value 32 bits, 0 refs
-	Key 32[00000007]: Value 32 bits, 0 refs
-}`
-
-	const sz = 15
-	dict := NewDict(32)
-	keys := make([]*Cell, sz)
-	for i := 0; i < sz; i++ {
-		key := BeginCell().MustStoreUInt(uint64(i), 32).EndCell()
-		keys[i] = key
-
-		if err := dict.Set(key, BeginCell().MustStoreUInt(uint64(i), 32).EndCell()); err != nil {
-			t.Fatal(err.Error())
-		}
-	}
-
-	sk := CreateProofSkeleton()
-	_, _, err := dict.LoadValueWithProof(BeginCell().MustStoreUInt(uint64(7), 32).EndCell(), sk)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-
-	prf, err := dict.AsCell().CreateProof(sk)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-
-	if dict.String() != look {
-		t.Fatal(dict.String())
-	}
-
-	prf, err = UnwrapProof(prf, dict.AsCell().Hash())
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-
-	// 1 more neighbour key could be in proof, it is ok
-	if d := prf.AsDict(32); d.String() != lookProof {
-		t.Fatal(d.String())
 	}
 }

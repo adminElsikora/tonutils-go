@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/xssnick/tonutils-go/adnl"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"github.com/xssnick/tonutils-go/tl"
 	"net"
 	"reflect"
@@ -22,7 +21,7 @@ func newCorrectDhtNode(a byte, b byte, c byte, d byte, port string) (*dhtNode, e
 		return nil, err
 	}
 
-	kId, err := tl.Hash(keys.PublicKeyED25519{Key: tPubKey})
+	kId, err := tl.Hash(adnl.PublicKeyED25519{Key: tPubKey})
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +43,7 @@ func TestNode_findNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal("failed to prepare test pub key, err: ", err)
 	}
-	pubKeyAdnl := keys.PublicKeyED25519{Key: pubKey}
+	pubKeyAdnl := adnl.PublicKeyED25519{Key: pubKey}
 
 	idKey, err := tl.Hash(pubKeyAdnl)
 	if err != nil {

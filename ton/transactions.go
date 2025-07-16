@@ -5,13 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/xssnick/tonutils-go/address"
 	"github.com/xssnick/tonutils-go/tl"
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/tvm/cell"
+	"strings"
+	"time"
 )
 
 func init() {
@@ -177,17 +176,16 @@ func (c *APIClient) GetTransaction(ctx context.Context, block *BlockIDExt, addr 
 }
 
 func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *address.Address, lastProcessedLT uint64, channel chan<- *tlb.Transaction) {
-	defer close(channel)
+	defer func() {
+		close(channel)
+	}()
 
 	wait := 0 * time.Second
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-
 	for {
 		select {
 		case <-workerCtx.Done():
 			return
-		case <-timer.C:
+		case <-time.After(wait):
 		}
 		wait = 3 * time.Second
 
@@ -195,7 +193,6 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 		master, err := c.CurrentMasterchainInfo(ctx)
 		cancel()
 		if err != nil {
-			timer.Reset(wait)
 			continue
 		}
 
@@ -203,18 +200,15 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 		acc, err := c.GetAccount(ctx, master, addr)
 		cancel()
 		if err != nil {
-			timer.Reset(wait)
 			continue
 		}
 		if !acc.IsActive || acc.LastTxLT == 0 {
 			// no transactions
-			timer.Reset(wait)
 			continue
 		}
 
 		if lastProcessedLT == acc.LastTxLT {
 			// already processed all
-			timer.Reset(wait)
 			continue
 		}
 
@@ -222,20 +216,12 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 		lastHash, lastLT := acc.LastTxHash, acc.LastTxLT
 
 		waitList := 0 * time.Second
-		listTimer := time.NewTimer(waitList)
-
 	list:
 		for {
 			select {
 			case <-workerCtx.Done():
-				listTimer.Stop()
 				return
-			case <-listTimer.C:
-			}
-
-			if lastLT == 0 {
-				// exhausted all transactions
-				break
+			case <-time.After(waitList):
 			}
 
 			ctx, cancel = context.WithTimeout(workerCtx, 10*time.Second)
@@ -244,14 +230,9 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 			if err != nil {
 				if lsErr, ok := err.(LSError); ok && lsErr.Code == -400 {
 					// lt not in db error
-					listTimer.Stop()
 					return
-				} else if errors.Is(err, ErrNoTransactionsWereFound) && (len(transactions) > 0) {
-					// process already found transactions
-					break
 				}
 				waitList = 3 * time.Second
-				listTimer.Reset(waitList)
 				continue
 			}
 
@@ -274,10 +255,7 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 			lastLT, lastHash = res[len(res)-1].PrevTxLT, res[len(res)-1].PrevTxHash
 			transactions = append(transactions, res...)
 			waitList = 0 * time.Second
-			listTimer.Reset(waitList)
 		}
-
-		listTimer.Stop()
 
 		if len(transactions) > 0 {
 			lastProcessedLT = transactions[0].LT // mark last transaction as known to not trigger twice
@@ -293,8 +271,6 @@ func (c *APIClient) SubscribeOnTransactions(workerCtx context.Context, addr *add
 
 			wait = 0 * time.Second
 		}
-
-		timer.Reset(wait)
 	}
 }
 
@@ -368,14 +344,8 @@ func (c *APIClient) findLastTransactionByHash(ctx context.Context, addr *address
 				if transaction.IO.In == nil {
 					continue
 				}
-
-				if transaction.IO.In.MsgType == tlb.MsgTypeExternalIn &&
-					bytes.Equal(transaction.IO.In.Msg.(*tlb.ExternalMessageIn).NormalizedHash(), msgHash) {
-					return transaction, nil
-				}
-
-				if bytes.Equal(transaction.IO.In.Msg.Payload().Hash(), msgHash) {
-					return transaction, nil
+				if !bytes.Equal(transaction.IO.In.Msg.Payload().Hash(), msgHash) {
+					continue
 				}
 			}
 

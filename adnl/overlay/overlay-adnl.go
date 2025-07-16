@@ -7,10 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/xssnick/raptorq"
 	"github.com/xssnick/tonutils-go/adnl"
-	"github.com/xssnick/tonutils-go/adnl/keys"
 	"github.com/xssnick/tonutils-go/adnl/rldp"
+	"github.com/xssnick/tonutils-go/adnl/rldp/raptorq"
 	"github.com/xssnick/tonutils-go/tl"
 	"reflect"
 	"sync"
@@ -35,9 +34,9 @@ type fecBroadcastStream struct {
 
 type ADNLOverlayWrapper struct {
 	overlayId      []byte
-	authorizedKeys map[string]uint32
+	authorizedKeys map[string]int32
 
-	maxUnauthSize     uint32
+	maxUnauthSize     int32
 	allowFEC          bool
 	trustUnauthorized bool
 
@@ -58,7 +57,7 @@ func (a *ADNLWrapper) WithOverlay(id []byte) *ADNLOverlayWrapper {
 	return a.CreateOverlayWithSettings(id, 0, true, false)
 }
 
-func (a *ADNLWrapper) CreateOverlayWithSettings(id []byte, maxUnauthBroadcastSize uint32,
+func (a *ADNLWrapper) CreateOverlayWithSettings(id []byte, maxUnauthBroadcastSize int32,
 	allowBroadcastFEC bool, trustUnauthorizedBroadcast bool) *ADNLOverlayWrapper {
 	a.mx.Lock()
 	defer a.mx.Unlock()
@@ -82,12 +81,12 @@ func (a *ADNLWrapper) CreateOverlayWithSettings(id []byte, maxUnauthBroadcastSiz
 	return w
 }
 
-func (a *ADNLOverlayWrapper) SetAuthorizedKeys(keysWithMaxLen map[string]uint32) {
+func (a *ADNLOverlayWrapper) SetAuthorizedKeys(keysWithMaxLen map[string]int32) {
 	a.mx.Lock()
 	defer a.mx.Unlock()
 
 	// reset and copy
-	a.authorizedKeys = map[string]uint32{}
+	a.authorizedKeys = map[string]int32{}
 	for k, v := range keysWithMaxLen {
 		a.authorizedKeys[k] = v
 	}
@@ -101,7 +100,7 @@ func (a *ADNLWrapper) UnregisterOverlay(id []byte) {
 }
 
 func (a *ADNLOverlayWrapper) SendCustomMessage(ctx context.Context, req tl.Serializable) error {
-	return a.ADNLWrapper.SendCustomMessage(ctx, []tl.Serializable{Message{Overlay: a.overlayId}, req})
+	return a.ADNLWrapper.SendCustomMessage(ctx, []tl.Serializable{Query{Overlay: a.overlayId}, req})
 }
 
 func (a *ADNLOverlayWrapper) Query(ctx context.Context, req, result tl.Serializable) error {
@@ -137,7 +136,7 @@ func (a *ADNLOverlayWrapper) Close() {
 	a.ADNLWrapper.UnregisterOverlay(a.overlayId)
 }
 
-func (a *ADNLOverlayWrapper) checkRules(keyId string, dataSize uint32, isFEC bool) CertCheckResult {
+func (a *ADNLOverlayWrapper) checkRules(keyId string, dataSize int32, isFEC bool) CertCheckResult {
 	if dataSize == 0 {
 		return CertCheckResultForbidden
 	}
@@ -175,11 +174,13 @@ func (a *ADNLOverlayWrapper) processFECBroadcast(t *BroadcastFEC) error {
 	stream := a.broadcastStreams[id]
 	a.streamsMx.RUnlock()
 
-	partDataHash := sha256.Sum256(t.Data)
+	partDataHasher := sha256.New()
+	partDataHasher.Write(t.Data)
+	partDataHash := partDataHasher.Sum(nil)
 
 	partHash, err := tl.Hash(&BroadcastFECPartID{
 		BroadcastHash: broadcastHash,
-		DataHash:      partDataHash[:],
+		DataHash:      partDataHash,
 		Seqno:         t.Seqno,
 	})
 	if err != nil {
@@ -194,7 +195,7 @@ func (a *ADNLOverlayWrapper) processFECBroadcast(t *BroadcastFEC) error {
 		return fmt.Errorf("failed to serialize broadcast for sign check: %w", err)
 	}
 
-	sourceKey, ok := t.Source.(keys.PublicKeyED25519)
+	sourceKey, ok := t.Source.(adnl.PublicKeyED25519)
 	if !ok {
 		return fmt.Errorf("invalid signer key format")
 	}
@@ -340,8 +341,9 @@ func (a *ADNLOverlayWrapper) processFECBroadcast(t *BroadcastFEC) error {
 			}
 			a.streamsMx.Unlock()
 
-			dHash := sha256.Sum256(data)
-			if !bytes.Equal(dHash[:], t.DataHash) {
+			dHash := sha256.New()
+			dHash.Write(data)
+			if !bytes.Equal(dHash.Sum(nil), t.DataHash) {
 				return fmt.Errorf("incorrect data hash")
 			}
 

@@ -1,4 +1,4 @@
-package keys
+package adnl
 
 import (
 	"crypto/ed25519"

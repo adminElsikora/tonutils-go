@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/xssnick/tonutils-go/address"
-	"github.com/xssnick/tonutils-go/adnl/keys"
+	"github.com/xssnick/tonutils-go/adnl"
 	"github.com/xssnick/tonutils-go/tl"
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/tvm/cell"
@@ -20,7 +20,6 @@ import (
 
 func init() {
 	tl.Register(ValidatorSetHashable{}, "test0.validatorSet#901660ed")
-	tl.Register(ValidatorItemHashable{}, "")
 }
 
 var ErrNoProof = fmt.Errorf("liteserver has no proof for this account in a given block, request newer block or disable proof checks")
@@ -219,7 +218,7 @@ func CheckBackwardBlockProof(from, to *BlockIDExt, toKey bool, stateProof, destP
 
 	toBlock, err := CheckBlockProof(destProof, to.RootHash)
 	if err != nil {
-		return fmt.Errorf("failed to check target block proof: %w", err)
+		return fmt.Errorf("failed to check traget block proof: %w", err)
 	}
 
 	if toBlock.BlockInfo.KeyBlock != toKey {
@@ -259,7 +258,7 @@ func CheckBackwardBlockProof(from, to *BlockIDExt, toKey bool, stateProof, destP
 	}
 
 	if !bytes.Equal(blk.BlkRef.RootHash, to.RootHash) {
-		return fmt.Errorf("incorrect target block hash in proof")
+		return fmt.Errorf("incorret target block hash in proof")
 	}
 	return nil
 }
@@ -275,7 +274,7 @@ func CheckForwardBlockProof(from, to *BlockIDExt, toKey bool, configProof, destP
 
 	toBlock, err := CheckBlockProof(destProof, to.RootHash)
 	if err != nil {
-		return fmt.Errorf("failed to check target block proof: %w", err)
+		return fmt.Errorf("failed to check traget block proof: %w", err)
 	}
 
 	if toBlock.BlockInfo.KeyBlock != toKey {
@@ -325,19 +324,19 @@ func CheckForwardBlockProof(from, to *BlockIDExt, toKey bool, configProof, destP
 		return fmt.Errorf("failed to parse validators config: %w", err)
 	}
 
-	validators, err := GetMainValidators(to, catchainCfg, blockValidators, toBlock.BlockInfo.GenCatchainSeqno)
+	validators, err := getMainValidators(to, catchainCfg, blockValidators, toBlock.BlockInfo.GenCatchainSeqno)
 	if err != nil {
 		return fmt.Errorf("failed to verify and get main block validators: %w", err)
 	}
 
-	if err = CheckBlockSignatures(to, signatures, validators); err != nil {
+	if err = checkBlockSignatures(to, signatures, validators); err != nil {
 		return fmt.Errorf("failed to check validators signatures: %w", err)
 	}
 
 	return nil
 }
 
-func GetMainValidators(block *BlockIDExt, catConfig tlb.CatchainConfig, validatorConfig tlb.ValidatorSetAny, ccSeqno uint32) ([]*tlb.ValidatorAddr, error) {
+func getMainValidators(block *BlockIDExt, catConfig tlb.CatchainConfig, validatorConfig tlb.ValidatorSetAny, ccSeqno uint32) ([]*tlb.ValidatorAddr, error) {
 	if block.Workchain != address.MasterchainID {
 		return nil, fmt.Errorf("only masterchain blocks currently supported")
 	}
@@ -436,7 +435,7 @@ func GetMainValidators(block *BlockIDExt, catConfig tlb.CatchainConfig, validato
 	return validators, nil
 }
 
-func CheckBlockSignatures(block *BlockIDExt, sigs *SignatureSet, validators []*tlb.ValidatorAddr) error {
+func checkBlockSignatures(block *BlockIDExt, sigs *SignatureSet, validators []*tlb.ValidatorAddr) error {
 	if len(sigs.Signatures) == 0 || len(validators) == 0 {
 		return fmt.Errorf("zero signatures or validators")
 	}
@@ -453,7 +452,7 @@ func CheckBlockSignatures(block *BlockIDExt, sigs *SignatureSet, validators []*t
 	var totalWeight, signedWeight uint64
 	validatorsMap := map[string]*tlb.ValidatorAddr{}
 	for _, v := range validators {
-		kid, err := tl.Hash(keys.PublicKeyED25519{Key: v.PublicKey.Key})
+		kid, err := tl.Hash(adnl.PublicKeyED25519{Key: v.PublicKey.Key})
 		if err != nil {
 			return fmt.Errorf("failed to calc validator key id: %w", err)
 		}
