@@ -81,7 +81,7 @@ func (c *APIClient) GetAccount(ctx context.Context, block *BlockIDExt, addr *add
 			shardHash = t.Shard.RootHash
 		}
 
-		shardAcc, err := CheckAccountStateProof(addr, block, t.Proof, t.ShardProof, shardHash, c.proofCheckPolicy == ProofCheckPolicyUnsafe)
+		shardAcc, balanceInfo, err := CheckAccountStateProof(addr, block, t.Proof, t.ShardProof, shardHash, c.proofCheckPolicy == ProofCheckPolicyUnsafe)
 		if errors.Is(err, ErrNoAddrInProof) && t.State == nil {
 			return &tlb.Account{
 				IsActive: false,
@@ -101,6 +101,10 @@ func (c *APIClient) GetAccount(ctx context.Context, block *BlockIDExt, addr *add
 		var st tlb.AccountState
 		if err = st.LoadFromCell(t.State.BeginParse()); err != nil {
 			return nil, fmt.Errorf("failed to load account state: %w", err)
+		}
+
+		if st.Balance.Nano().Cmp(balanceInfo.Currencies.Coins.Nano()) != 0 {
+			fmt.Printf("Warning: proof balance not match state balance\n")
 		}
 
 		acc.LastTxHash = shardAcc.LastTransHash
